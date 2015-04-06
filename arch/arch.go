@@ -2,138 +2,90 @@ package arch
 
 import (
 	"fmt"
-	"strings"
+	"io"
+	"log"
 
 	"github.com/influx6/composelab/routes"
+	"github.com/influx6/evroll"
 	"github.com/influx6/goutils"
+	"github.com/influx6/grids"
 )
+
+var _ interface{}
 
 //Services defines the interface that all services must implement to be considered valid servers
 type Services interface {
-	Dial()
+	Dial() error
 	Drop()
 	Location() string
 	Register(string, string, map[string]interface{})
 	Unregister(string, string)
 	Discover(string)
+	Meta() map[string]interface{}
+	ServiceName() string
 }
 
 //Linkage defines the link interface, links are like encapsulation of connection methods which allow the communication
 //of services i.e your service can be communicating with udp to tcp(http) as protocols as far as it can be discovered and
 //related to through http it is valid
 type Linkage interface {
+	GetPrefix() string
 	GetPath() string
 	GetAddress() string
 	GetPort() int
-	Serve()
+	Discover(string, func(string, interface{})) error
+	Register(string, map[string]interface{}) ([]byte, error)
+	Request(string, io.Reader, func(...interface{})) ([]byte, error)
 	Dial()
-	Drop()
+	End()
 }
 
 //Service is the base struct defining attributes of a service
 type Service struct {
-	ServicePath string
+	*grids.Grid
+	address     string
+	port        int
+	servicePath string
 	Master      Linkage
-	Hook        Linkage
 	Slaves      *goutils.Map
-	Routes      *routes.Routes
-}
-
-//Master struct for master connections
-type Master struct {
-	*Service
+	Registry    *goutils.Map
+	Route       *routes.Routes
 }
 
 //ServiceLink is the concret struct define the linkage basic properties
 type ServiceLink struct {
-	Address string
-	Port    int
+	*evroll.Streams
+	prefix  string
+	address string
+	port    int
 }
 
-//NewServiceLink returns a new serviceLink
-func NewServiceLink(addr string, port int) *ServiceLink {
-	return &ServiceLink{
-		addr,
-		port,
-	}
+//Dial is an empty for handling service link dialing
+func (s *ServiceLink) Dial() {
 }
 
-//WrapLink returns a serviceLink wrapped by a Linkage
-func WrapLink(sl *ServiceLink) Linkage {
-	return Linkage(sl)
+//End is an empty for handling service link disconnection
+func (s *ServiceLink) End() {
 }
 
-//HttpLink retuns a new service link for http based operations
-type HttpLink struct {
-	*ServiceLink
+//Discover is an empty for handling service link discover
+func (s *ServiceLink) Discover(f string, b func(s string, f interface{})) error {
+	return nil
 }
 
-//NewHttpLink returns a new http service link
-func NewHttpLink(addr string, port int) *HttpLink {
-	return &HttpLink{NewServiceLink(addr, port)}
+//Request is an empty for handling service link discover
+func (s *ServiceLink) Request(f string, bd io.Reader, action func(m ...interface{})) ([]byte, error) {
+	return nil, nil
 }
 
-//NewService creates a new service struct
-func NewService(serviceName string, master Linkage, hook Linkage) *Service {
-	sv := &Service{
-		serviceName,
-		master,
-		hook,
-		goutils.NewMap(),
-		routes.NewRoutes(serviceName),
-	}
-
-	sv.Routes.Branch("discover")
-	sv.Routes.Branch("register")
-	sv.Routes.Branch("unregister")
-	sv.Routes.Branch("api")
-
-	return sv
+//Register is an empty for handling service link registeration for master operations
+func (s *ServiceLink) Register(string, map[string]interface{}) ([]byte, error) {
+	return nil, nil
 }
 
-//NewMaster creates a new master service struct
-func NewMaster(addr string, port int) *Service {
-	hook := Linkage(NewHttpLink(addr, port))
-	return NewService("master", nil, hook)
-}
-
-//NewHttpSlave creates a new slave service struct
-func NewHttpSlave(serviceName string, slaveAddr string, masterAddr string) (*Service, error) {
-	sa := strings.Split(slaveAddr, ":")
-	ma := strings.Split(masterAddr, ":")
-
-	if len(sa) < 2 {
-		return nil, fmt.Errorf("Slave address incorrect, expecting 'addr:port' format %s", slaveAddr)
-	}
-
-	if len(ma) < 2 {
-		return nil, fmt.Errorf("Master address incorrect, expecting 'addr:port' format %s", masterAddr)
-	}
-
-	sad := sa[0]
-	spt := int(sa[1])
-
-	mad := ma[0]
-	mpt := int(ma[1])
-
-	master := Linkage(NewHttpLink(mad, mpt))
-	hook := Linkage(NewHttpLink(sad, spt))
-	return NewService(serviceName, master, hook), nil
-}
-
-//Dial initiates the connections for the service
-func (s *Service) Dial() {
-	s.Hook.Dial()
-}
-
-//Drop stops and ends the connection for the service
-func (s *Service) Drop() {
-	s.Hook.Drop()
-}
-
-//Location returns a string of the address and path of the service
-func (s *Service) Location() string {
-	return fmt.Sprintf("%s@%s", s.ServicePath, s.Hook.GetPath())
+//GetPrefix returns the prefix of the service
+func (s *ServiceLink) GetPrefix() string {
+	return s.prefix
 }
 
 //GetPath returns the path of the service
@@ -143,32 +95,104 @@ func (s *ServiceLink) GetPath() string {
 
 //GetAddress returns the address of the service
 func (s *ServiceLink) GetAddress() string {
-	return s.Address
+	return s.address
 }
 
 //GetPort returns the port of the service
 func (s *ServiceLink) GetPort() int {
-	return s.Port
+	return s.port
 }
 
-//Dial provides the connection features for a servicelink
-func (s *ServiceLink) Dial() {
-
+//NewServiceLink returns a new serviceLink
+func NewServiceLink(prefix string, addr string, port int) *ServiceLink {
+	return &ServiceLink{
+		evroll.NewStream(false, false),
+		prefix,
+		addr,
+		port,
+	}
 }
 
-//Drop provides the disconnection features for a servicelink
-func (s *ServiceLink) Drop() {
+//NewService creates a new service struct
+func NewService(serviceName string, addr string, port int, master Linkage) *Service {
+	sv := &Service{
+		grids.NewGrid(serviceName),
+		addr,
+		port,
+		serviceName,
+		master,
+		goutils.NewMap(),
+		goutils.NewMap(),
+		routes.NewRoutes(serviceName),
+	}
+
+	sv.Route.Branch("discover")
+	sv.Route.Branch("register")
+	sv.Route.Branch("unregister")
+	sv.Route.Branch("api")
+
+	if sv.Master != nil {
+		body, err := sv.Master.Register(serviceName, sv.Meta())
+
+		if err != nil {
+			log.Fatal("unable to register with master:", serviceName, body, err)
+		}
+
+	}
+
+	return sv
 }
 
-//Serve provides the requests features for a servicelink
-func (s *ServiceLink) Serve() {
+//Divert provides a shortcut member funcs to call Divert on the Service Route
+func (s *Service) Divert(sm *Service) {
+	_ = s.Route.Divert(sm.Route)
+}
+
+//Branch provides a shortcut member funcs to call Branch on the Service Route
+func (s *Service) Branch(path string) {
+	s.Route.Branch(path)
+}
+
+//Select provides a shortcut member funcs to call Select on the Service Route
+func (s *Service) Select(path string) (*routes.Routes, error) {
+	return s.Route.Select(path)
+}
+
+//GetPath returns the path of the service
+func (s *Service) GetPath() string {
+	return fmt.Sprintf("%s:%d", s.address, s.port)
+}
+
+//Meta returns a map containing details about the service
+func (s *Service) Meta() map[string]interface{} {
+	return map[string]interface{}{
+		"address": s.address,
+		"port":    s.port,
+		"service": s.ServiceName(),
+	}
+}
+
+//Dial initiates the connections for the service
+func (s *Service) Dial() error { return nil }
+
+//ServiceName returns the service name/id
+func (s *Service) ServiceName() string {
+	return s.servicePath
+}
+
+//Drop stops and ends the connection for the service
+func (s *Service) Drop() {}
+
+//Location returns a string of the address and path of the service
+func (s *Service) Location() string {
+	return fmt.Sprintf("%s@%s", s.ServiceName(), s.GetPath())
 }
 
 //Register adds a servicelink into the services connection pool
 func (s *Service) Register(serviceName string, uuid string, meta map[string]interface{}) {
-	if s.Slaves.Has(serviceName) {
+	if s.Registry.Has(serviceName) {
 
-		sector, ok := s.Slaves.Get(serviceName).(*goutils.Map)
+		sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
 
 		if !ok {
 			return
@@ -179,16 +203,21 @@ func (s *Service) Register(serviceName string, uuid string, meta map[string]inte
 		}
 
 		sector.Set(uuid, meta)
+	} else {
+		smap := goutils.NewMap()
+		s.Registry.Set(serviceName, smap)
+		smap.Set(uuid, meta)
 	}
+
 }
 
 //Unregister removes a servicelink from the services connection pool
 func (s *Service) Unregister(serviceName string, uuid string) {
-	if !s.Slaves.Has(serviceName) {
+	if !s.Registry.Has(serviceName) {
 		return
 	}
 
-	sector, ok := s.Slaves.Get(serviceName).(*goutils.Map)
+	sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
 
 	if !ok {
 		return
@@ -198,13 +227,15 @@ func (s *Service) Unregister(serviceName string, uuid string) {
 		return
 	}
 
-	// suid := sector.Get(uuid).(Linkage)
 	sector.Remove(uuid)
-	// suid.Drop()
 }
 
-//Discover sends a request to the connected master seeking information about
-//about a service if such exists
-func (s *Service) Discover(serviceName string) {
+//Discover is an empty for handling service link discover
+func (s *Service) Discover(string) error {
+	return nil
+}
+
+//Request is an empty for handling service link discover
+func (s *Service) Request(string) {
 
 }

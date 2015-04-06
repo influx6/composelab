@@ -1,19 +1,17 @@
 package main
 
 import (
-	"fmt"
-
-	"github.com/influx6/composelab/arch"
+	"github.com/influx6/composelab/links"
+	"github.com/influx6/composelab/services"
 )
 
 func main() {
 
-	echo := arch.NewHttpSlave("echo", "127.0.0.1", 3001, "127.0.0.1", 3002)
+	master := links.NewHttpLinkage("127.0.0.1", 3002)
+	echo := services.NewHttpSlave("echo", "127.0.0.1", 3001, master)
 
 	echo.Dial()
 	echo.Discover("prime")
 	echo.Discover("views")
-
-	fmt.Println("echo-Path:", echo.Location())
 
 }

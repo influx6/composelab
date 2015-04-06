@@ -59,19 +59,18 @@ type Routes struct {
 
 //IssueRequestPath takes a string path and a data to issue an auto packet request
 //payload
-func (r *Routes) IssueRequestPath(path string, head interface{}) *grids.GridPacket {
+func (r *Routes) IssueRequestPath(path string, before func(*grids.GridPacket)) {
 	pack := grids.NewPacket()
-	pack.Set("Pathways", goutils.SplitPattern(path))
-	pack.Set("Payload", head)
+	pack.Set("Pathways", goutils.SplitPatternAndRemovePrefix(path))
 	//send off the request
+	before(pack)
 	r.InSend("Request", pack)
-	return pack
 }
 
 //IssueRequestPacket takes a string path and a packet and pushes off as a request
 func (r *Routes) IssueRequestPacket(path string, pack *grids.GridPacket) {
 	//add the Pathways meta data
-	pack.Set("Pathways", goutils.SplitPattern(path))
+	pack.Set("Pathways", goutils.SplitPatternAndRemovePrefix(path))
 	//send off the request
 	r.InSend("Request", pack)
 }
