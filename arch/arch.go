@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net"
 
 	"github.com/influx6/composelab/routes"
 	"github.com/influx6/evroll"
@@ -13,15 +14,18 @@ import (
 
 var _ interface{}
 
+//MetaMap Generic Map type
+type MetaMap map[string]interface{}
+
 //Services defines the interface that all services must implement to be considered valid servers
 type Services interface {
 	Dial() error
 	Drop()
 	Location() string
-	Register(string, string, map[string]interface{})
+	Register(string, string, MetaMap)
 	Unregister(string, string)
 	Discover(string)
-	Meta() map[string]interface{}
+	Meta() MetaMap
 	ServiceName() string
 }
 
@@ -33,11 +37,21 @@ type Linkage interface {
 	GetPath() string
 	GetAddress() string
 	GetPort() int
-	Discover(string, func(string, interface{})) error
-	Register(string, map[string]interface{}) ([]byte, error)
-	Request(string, io.Reader, func(...interface{})) ([]byte, error)
+	Discover(string, func(string, interface{}, interface{})) error
+	Register(string, MetaMap, func(...interface{})) error
+	Request(string, io.Reader, func(...interface{}), func(...interface{})) error
 	Dial()
 	End()
+}
+
+//UDPPack represents a standard json udp message
+type UDPPack struct {
+	Path    string         `json:"path"`
+	Service string         `json:"service"`
+	UUID    string         `json:"uuid"`
+	Data    []byte         `json:"data"`
+	Address *net.UDPAddr   `json:"address"`
+	Visited []*net.UDPAddr `json:"visited"`
 }
 
 //Service is the base struct defining attributes of a service
@@ -69,18 +83,18 @@ func (s *ServiceLink) End() {
 }
 
 //Discover is an empty for handling service link discover
-func (s *ServiceLink) Discover(f string, b func(s string, f interface{})) error {
+func (s *ServiceLink) Discover(f string, b func(s string, data interface{}, res interface{})) error {
 	return nil
 }
 
 //Request is an empty for handling service link discover
-func (s *ServiceLink) Request(f string, bd io.Reader, action func(m ...interface{})) ([]byte, error) {
-	return nil, nil
+func (s *ServiceLink) Request(f string, bd io.Reader, before func(m ...interface{}), after func(m ...interface{})) error {
+	return nil
 }
 
 //Register is an empty for handling service link registeration for master operations
-func (s *ServiceLink) Register(string, map[string]interface{}) ([]byte, error) {
-	return nil, nil
+func (s *ServiceLink) Register(sm string, m MetaMap, cf func(sets ...interface{})) error {
+	return nil
 }
 
 //GetPrefix returns the prefix of the service
@@ -132,10 +146,12 @@ func NewService(serviceName string, addr string, port int, master Linkage) *Serv
 	sv.Route.Branch("api")
 
 	if sv.Master != nil {
-		body, err := sv.Master.Register(serviceName, sv.Meta())
+		err := sv.Master.Register(serviceName, sv.Meta(), func(d ...interface{}) {
+			//maybe
+		})
 
 		if err != nil {
-			log.Fatal("unable to register with master:", serviceName, body, err)
+			log.Fatal("unable to register with master:", serviceName, err)
 		}
 
 	}
@@ -164,7 +180,7 @@ func (s *Service) GetPath() string {
 }
 
 //Meta returns a map containing details about the service
-func (s *Service) Meta() map[string]interface{} {
+func (s *Service) Meta() MetaMap {
 	return map[string]interface{}{
 		"address": s.address,
 		"port":    s.port,
@@ -189,7 +205,7 @@ func (s *Service) Location() string {
 }
 
 //Register adds a servicelink into the services connection pool
-func (s *Service) Register(serviceName string, uuid string, meta map[string]interface{}) {
+func (s *Service) Register(serviceName string, uuid string, meta MetaMap) {
 	if s.Registry.Has(serviceName) {
 
 		sector, ok := s.Registry.Get(serviceName).(*goutils.Map)

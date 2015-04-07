@@ -45,7 +45,7 @@ func NewHTTPWrap(h *HTTPLink) arch.Linkage {
 }
 
 //Discover sends a request to the set server links if a service exists
-func (hl *HTTPLink) Discover(target string, callback func(string, interface{})) error {
+func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, interface{})) error {
 	path := []string{hl.scheme, hl.GetPrefix(), "discover", target}
 	res, err := hl.client.Get(strings.Join(path, "/"))
 
@@ -57,7 +57,7 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{})) 
 	defer res.Body.Close()
 	status := res.StatusCode
 
-	if status == 200 {
+	if status == 200 || status == 201 || status == 304 {
 		body, err := ioutil.ReadAll(res.Body)
 
 		if err != nil {
@@ -74,25 +74,27 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{})) 
 			return err
 		}
 
-		callback(target, jsn)
+		callback(target, jsn, res)
 	}
 
 	return nil
 }
 
 //Register  registers a service to the specific server with the meta details as json
-func (hl *HTTPLink) Register(target string, meta map[string]interface{}) ([]byte, error) {
+func (hl *HTTPLink) Register(target string, meta arch.MetaMap, cb func(d ...interface{})) error {
 	path := []string{"register", target}
 	jsn, err := json.Marshal(meta)
 	url := strings.Join(path, "/")
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
-	res, err := hl.Request(url, bytes.NewReader(jsn), func(sets ...interface{}) {
+	return hl.Request(url, bytes.NewReader(jsn), func(sets ...interface{}) {
 		rq := sets[0]
 		req, ok := rq.(*http.Request)
+
+		// cb := sets[1]
 
 		if !ok {
 			return
@@ -100,18 +102,15 @@ func (hl *HTTPLink) Register(target string, meta map[string]interface{}) ([]byte
 
 		req.Header.Set("X-Service-Request", hl.GetPath())
 		req.Header.Set("Content-Type", "application/json")
+
+	}, func(resd ...interface{}) {
+		cb(resd...)
 	})
-
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
 
 }
 
 //Request provides a means of providing a generic requests to the server
-func (hl *HTTPLink) Request(target string, body io.Reader, handler func(r ...interface{})) ([]byte, error) {
+func (hl *HTTPLink) Request(target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
 	path := []string{hl.scheme, hl.GetPrefix(), target}
 	var req *http.Request
 	var err error
@@ -120,29 +119,31 @@ func (hl *HTTPLink) Request(target string, body io.Reader, handler func(r ...int
 		req, err = http.NewRequest("GET", strings.Join(path, "/"), body)
 
 		if err != nil {
-			return nil, err
+			return err
 		}
 
 	} else {
 		req, err = http.NewRequest("POST", strings.Join(path, "/"), body)
 
 		if err != nil {
-			return nil, err
+			return err
 		}
 	}
 
-	handler(req)
+	before(req, target)
 
 	res, err := hl.client.Do(req)
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	defer res.Body.Close()
 
 	bo, err := ioutil.ReadAll(res.Body)
 
-	return bo, err
+	after(bo, res, req)
+
+	return err
 
 }

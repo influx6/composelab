@@ -4,51 +4,40 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"log"
 	"net"
 
 	"code.google.com/p/go-uuid/uuid"
 	"github.com/influx6/composelab/arch"
+	"github.com/influx6/goutils"
 )
 
 //UDPLink handles udp level communication
 type UDPLink struct {
 	*arch.ServiceLink
-	Conn *net.UDPConn
-	Addr *net.UDPAddr
-}
-
-//UDPPack represents a standard json udp message
-type UDPPack struct {
-	Path    string `json:"path"`
-	Service string `json:"service"`
-	UUID    string `json:"uuid"`
-	// Meta    map[string]interface{} `json:"meta"`
-	Data interface{} `json:"data"`
+	Conn   *net.UDPConn
+	Addr   *net.UDPAddr
+	buffer []byte
+	closer chan interface{}
 }
 
 //NewUDPLink creates a new udp based service link
 func NewUDPLink(serviceName string, addr string, port int) (*UDPLink, error) {
 	address := fmt.Sprintf("%s:%d", addr, port)
 	udpAddr, err := net.ResolveUDPAddr("udp4", address)
-	cAddr, err := net.ResolveUDPAddr("udp4", ":0")
 
 	if err != nil {
 		log.Fatalf("Error generating udp address: %v %s %s %d", err, address, addr, port)
 		return nil, err
 	}
 
-	conn, err := net.DialUDP("udp", cAddr, udpAddr)
-
-	if err != nil {
-		log.Fatalf("Error creating udp connection: %v %s", err, address)
-		return nil, err
-	}
-
 	return &UDPLink{
 		arch.NewServiceLink(serviceName, addr, port),
-		conn,
+		nil,
 		udpAddr,
+		make([]byte, 1024),
+		make(chan interface{}),
 	}, nil
 }
 
@@ -57,36 +46,143 @@ func NewUDPWrap(h *UDPLink) arch.Linkage {
 	return arch.Linkage(h)
 }
 
+//ReceiveDatagrams reads data from the server
+func (u *UDPLink) ReceiveDatagrams() {
+	for {
+		select {
+		case <-u.closer:
+			u.Conn.Close()
+		default:
+			len, _, err := u.Conn.ReadFromUDP(u.buffer)
+
+			if err != nil {
+				log.Fatal("Error reading udp", err)
+				// u.closer <- 1
+				return
+			}
+
+			u.Send(u.buffer[:len])
+		}
+	}
+}
+
 //Dial startup the service link
 func (u *UDPLink) Dial() {
+	if u.Conn != nil {
+		return
+	}
 
+	cAddr, err := net.ResolveUDPAddr("udp4", ":0")
+
+	if err != nil {
+		log.Fatal("Error generating custom client udp address: ", err, cAddr, u)
+		return
+	}
+
+	conn, err := net.DialUDP("udp", cAddr, u.Addr)
+
+	if err != nil {
+		log.Fatalf("Error creating udp connection: %v %s", err, u.GetPath())
+		return
+	}
+
+	u.Conn = conn
+	//bootup and listen for data
+	go u.ReceiveDatagrams()
+}
+
+//End calls to disconnect the udp link
+func (u *UDPLink) End() {
+	if u.closer == nil {
+		return
+	}
+
+	u.closer <- 1
+	close(u.closer)
+	u.closer = nil
 }
 
 //Discover meets the Linkage interface to request discovery from a server
-func (u *UDPLink) Discover(target string, callback func(string, interface{})) error {
+func (u *UDPLink) Discover(target string, callback func(string, interface{}, interface{})) error {
+	return u.Request(fmt.Sprintf("%s:%s", "discover", target), nil, nil, func(d ...interface{}) {
+		//do something interesting
+		jsm := d[1]
+		rsm := d[0]
 
-	return nil
+		jsx, ok := rsm.(*arch.UDPPack)
+
+		if !ok {
+			log.Fatalf("response is not a UDPPack %v from %v ", rsm, jsm)
+			return
+		}
+
+		var data interface{}
+
+		err := json.Unmarshal(jsx.Data, data)
+
+		if err != nil {
+			smx := goutils.MorphString.Morph(jsx.Data)
+			callback(target, smx, jsx)
+			return
+		}
+
+		callback(target, data, jsx)
+
+	})
 }
 
 //Register sends off a service meta information to the server
-func (u *UDPLink) Register(target string, meta map[string]interface{}) ([]byte, error) {
+func (u *UDPLink) Register(target string, meta arch.MetaMap, callback func(data ...interface{})) error {
+	jsm, err := json.Marshal(meta)
 
-	return nil, nil
+	if err != nil {
+		log.Fatalf("error occured in coverting map with json %v %v", meta, err)
+		return err
+	}
+
+	r, w := io.Pipe()
+
+	err = u.Request(fmt.Sprintf("%s:%s", "register", target), r, nil, func(d ...interface{}) {
+		//do something interesting
+		callback(d...)
+	})
+
+	w.Write(jsm)
+
+	return err
 }
 
 //Request sends information to the server for a response
-func (u *UDPLink) Request(target string, body io.Reader, callback func(st ...interface{})) ([]byte, error) {
-	jp := &UDPPack{
+func (u *UDPLink) Request(target string, body io.Reader, before func(st ...interface{}), after func(smt ...interface{})) error {
+
+	var bits []byte
+
+	if body != nil {
+		bits, err := ioutil.ReadAll(body)
+
+		if err != nil {
+			log.Fatalf("error occured in reading with reader %v %v %v", body, err, bits)
+			return err
+		}
+	}
+
+	jp := &arch.UDPPack{
 		fmt.Sprintf("%s/%s", u.GetPrefix(), target),
 		target,
 		uuid.New(),
-		nil,
+		bits,
+		u.Addr,
+		make([]*net.UDPAddr, 0),
+	}
+
+	if before != nil {
+		before(jp, target)
 	}
 
 	jsn, err := json.Marshal(jp)
 
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	u.Conn.Write(jsn)
@@ -95,27 +191,28 @@ func (u *UDPLink) Request(target string, body io.Reader, callback func(st ...int
 
 	callable := func(data interface{}) {
 
-		reply, ok := data.([]byte)
+		bo, ok := data.([]byte)
 
 		if !ok {
+			log.Fatal("Incorrect packet comming in", data, bo)
 			return
 		}
 
-		var jsnx interface{}
-		err := json.Unmarshal(reply, jsnx)
+		jsnx := new(arch.UDPPack)
+		err := json.Unmarshal(bo, jsnx)
 
 		if err != nil {
+			strco := goutils.MorphString.Morph(bo)
+			if after != nil {
+				after(strco, jp, target)
+			}
 			return
 		}
 
-		mp, ok := jsnx.(UDPPack)
-
-		if !ok {
-			return
-		}
-
-		if jp.UUID == mp.UUID {
-			callback(jp, mp, target)
+		if jp.UUID == jsnx.UUID {
+			if after != nil {
+				after(jsnx, jp, target)
+			}
 			u.ReceiveDoneOnce(func(d interface{}) {
 				u.RemoveCallback(ind)
 			})
@@ -125,5 +222,5 @@ func (u *UDPLink) Request(target string, body io.Reader, callback func(st ...int
 
 	u.Receive(callable)
 
-	return nil, nil
+	return nil
 }
