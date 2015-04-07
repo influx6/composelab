@@ -76,6 +76,7 @@ func (u *UDPService) End() {
 	}
 
 	u.closer <- 1
+	close(u.closer)
 	u.Server = nil
 }
 
