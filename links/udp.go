@@ -32,8 +32,10 @@ func NewUDPLink(serviceName string, addr string, port int) (*UDPLink, error) {
 		return nil, err
 	}
 
+	desc := arch.NewDescriptor("udp", serviceName, addr, udpAddr.Port, udpAddr.Zone, "udp4")
+
 	return &UDPLink{
-		arch.NewServiceLink(serviceName, addr, port),
+		arch.NewServiceLink(desc),
 		nil,
 		udpAddr,
 		make([]byte, 1024),
@@ -132,7 +134,7 @@ func (u *UDPLink) Discover(target string, callback func(string, interface{}, int
 }
 
 //Register sends off a service meta information to the server
-func (u *UDPLink) Register(target string, meta arch.MetaMap, callback func(data ...interface{})) error {
+func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback func(data ...interface{})) error {
 	jsm, err := json.Marshal(meta)
 
 	if err != nil {
@@ -202,10 +204,10 @@ func (u *UDPLink) Request(target string, body io.Reader, before func(st ...inter
 		err := json.Unmarshal(bo, jsnx)
 
 		if err != nil {
-			strco := goutils.MorphString.Morph(bo)
-			if after != nil {
-				after(strco, jp, target)
-			}
+			// strco := goutils.MorphString.Morph(bo)
+			// if after != nil {
+			after(bo, jp, target)
+			// }
 			return
 		}
 

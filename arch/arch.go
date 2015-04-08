@@ -14,18 +14,14 @@ import (
 
 var _ interface{}
 
-//MetaMap Generic Map type
-type MetaMap map[string]interface{}
-
 //Services defines the interface that all services must implement to be considered valid servers
 type Services interface {
 	Dial() error
 	Drop()
 	Location() string
-	Register(string, string, MetaMap)
+	Register(string, string, *LinkDescriptor)
 	Unregister(string, string)
 	Discover(string)
-	Meta() MetaMap
 	ServiceName() string
 }
 
@@ -33,12 +29,13 @@ type Services interface {
 //of services i.e your service can be communicating with udp to tcp(http) as protocols as far as it can be discovered and
 //related to through http it is valid
 type Linkage interface {
+	GetDescriptor() *LinkDescriptor
 	GetPrefix() string
 	GetPath() string
 	GetAddress() string
 	GetPort() int
 	Discover(string, func(string, interface{}, interface{})) error
-	Register(string, MetaMap, func(...interface{})) error
+	Register(string, *LinkDescriptor, func(...interface{})) error
 	Request(string, io.Reader, func(...interface{}), func(...interface{})) error
 	Dial()
 	End()
@@ -57,21 +54,46 @@ type UDPPack struct {
 //Service is the base struct defining attributes of a service
 type Service struct {
 	*grids.Grid
-	address     string
-	port        int
-	servicePath string
-	Master      Linkage
-	Slaves      *goutils.Map
-	Registry    *goutils.Map
-	Route       *routes.Routes
+	descrptior *LinkDescriptor
+	Master     Linkage
+	Slaves     *goutils.Map
+	Registry   *goutils.Map
+	Route      *routes.Routes
+}
+
+//LinkDescriptor provides basic level description for links
+type LinkDescriptor struct {
+	Service string                 `json:"service"`
+	Address string                 `json:"address"`
+	Port    int                    `json:"port"`
+	Zone    string                 `json:"zone"`
+	Scheme  string                 `json:"scheme"`
+	Misc    map[string]interface{} `json:"misc"`
+	Proto   string                 `json:"proto"`
+}
+
+//NewDescriptor creates a new LinkDescriptor
+func NewDescriptor(proto string, name string, addr string, port int, zone string, scheme string) *LinkDescriptor {
+	return &LinkDescriptor{
+		name,
+		addr,
+		port,
+		zone,
+		scheme,
+		make(map[string]interface{}),
+		proto,
+	}
 }
 
 //ServiceLink is the concret struct define the linkage basic properties
 type ServiceLink struct {
 	*evroll.Streams
-	prefix  string
-	address string
-	port    int
+	desc *LinkDescriptor
+}
+
+//GetDescriptor is an empty for handling service link dialing
+func (s *ServiceLink) GetDescriptor() *LinkDescriptor {
+	return s.desc
 }
 
 //Dial is an empty for handling service link dialing
@@ -93,13 +115,13 @@ func (s *ServiceLink) Request(f string, bd io.Reader, before func(m ...interface
 }
 
 //Register is an empty for handling service link registeration for master operations
-func (s *ServiceLink) Register(sm string, m MetaMap, cf func(sets ...interface{})) error {
+func (s *ServiceLink) Register(sm string, m *LinkDescriptor, cf func(sets ...interface{})) error {
 	return nil
 }
 
 //GetPrefix returns the prefix of the service
 func (s *ServiceLink) GetPrefix() string {
-	return s.prefix
+	return s.desc.Service
 }
 
 //GetPath returns the path of the service
@@ -109,35 +131,31 @@ func (s *ServiceLink) GetPath() string {
 
 //GetAddress returns the address of the service
 func (s *ServiceLink) GetAddress() string {
-	return s.address
+	return s.desc.Address
 }
 
 //GetPort returns the port of the service
 func (s *ServiceLink) GetPort() int {
-	return s.port
+	return s.desc.Port
 }
 
 //NewServiceLink returns a new serviceLink
-func NewServiceLink(prefix string, addr string, port int) *ServiceLink {
+func NewServiceLink(d *LinkDescriptor) *ServiceLink {
 	return &ServiceLink{
 		evroll.NewStream(false, false),
-		prefix,
-		addr,
-		port,
+		d,
 	}
 }
 
 //NewService creates a new service struct
-func NewService(serviceName string, addr string, port int, master Linkage) *Service {
+func NewService(desc *LinkDescriptor, master Linkage) *Service {
 	sv := &Service{
-		grids.NewGrid(serviceName),
-		addr,
-		port,
-		serviceName,
+		grids.NewGrid(desc.Service),
+		desc,
 		master,
 		goutils.NewMap(),
 		goutils.NewMap(),
-		routes.NewRoutes(serviceName),
+		routes.NewRoutes(desc.Service),
 	}
 
 	sv.Route.Branch("discover")
@@ -146,17 +164,22 @@ func NewService(serviceName string, addr string, port int, master Linkage) *Serv
 	sv.Route.Branch("api")
 
 	if sv.Master != nil {
-		err := sv.Master.Register(serviceName, sv.Meta(), func(d ...interface{}) {
+		err := sv.Master.Register(desc.Service, sv.GetDescriptor(), func(d ...interface{}) {
 			//maybe
 		})
 
 		if err != nil {
-			log.Fatal("unable to register with master:", serviceName, err)
+			log.Fatal("unable to register with master:", desc.Service, err)
 		}
 
 	}
 
 	return sv
+}
+
+//GetDescriptor is an empty for handling service link dialing
+func (s *Service) GetDescriptor() *LinkDescriptor {
+	return s.descrptior
 }
 
 //Divert provides a shortcut member funcs to call Divert on the Service Route
@@ -176,16 +199,17 @@ func (s *Service) Select(path string) (*routes.Routes, error) {
 
 //GetPath returns the path of the service
 func (s *Service) GetPath() string {
-	return fmt.Sprintf("%s:%d", s.address, s.port)
+	return fmt.Sprintf("%s:%d", s.GetAddress(), s.GetPort())
 }
 
-//Meta returns a map containing details about the service
-func (s *Service) Meta() MetaMap {
-	return map[string]interface{}{
-		"address": s.address,
-		"port":    s.port,
-		"service": s.ServiceName(),
-	}
+//GetAddress returns the adddress of the service
+func (s *Service) GetAddress() string {
+	return s.descrptior.Address
+}
+
+//GetPort returns the adddress of the service
+func (s *Service) GetPort() int {
+	return s.descrptior.Port
 }
 
 //Dial initiates the connections for the service
@@ -193,7 +217,7 @@ func (s *Service) Dial() error { return nil }
 
 //ServiceName returns the service name/id
 func (s *Service) ServiceName() string {
-	return s.servicePath
+	return s.descrptior.Service
 }
 
 //Drop stops and ends the connection for the service
@@ -205,7 +229,7 @@ func (s *Service) Location() string {
 }
 
 //Register adds a servicelink into the services connection pool
-func (s *Service) Register(serviceName string, uuid string, meta MetaMap) {
+func (s *Service) Register(serviceName string, uuid string, meta LinkDescriptor) {
 	if s.Registry.Has(serviceName) {
 
 		sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
@@ -244,14 +268,4 @@ func (s *Service) Unregister(serviceName string, uuid string) {
 	}
 
 	sector.Remove(uuid)
-}
-
-//Discover is an empty for handling service link discover
-func (s *Service) Discover(string) error {
-	return nil
-}
-
-//Request is an empty for handling service link discover
-func (s *Service) Request(string) {
-
 }

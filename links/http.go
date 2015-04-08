@@ -17,25 +17,24 @@ import (
 type HTTPLink struct {
 	*arch.ServiceLink
 	client *http.Client
-	scheme string
 }
 
 //NewHTTPLink returns a new http service link
 func NewHTTPLink(prefix string, addr string, port int) *HTTPLink {
+	desc := arch.NewDescriptor("http", prefix, addr, port, "0", "http://")
 	return &HTTPLink{
-		arch.NewServiceLink(prefix, addr, port),
+		arch.NewServiceLink(desc),
 		new(http.Client),
-		"http://",
 	}
 }
 
 //NewSecureHTTPLink returns a new http service link
 func NewSecureHTTPLink(prefix string, addr string, port int, trans *http.Transport) *HTTPLink {
 	cl := &http.Client{Transport: trans}
+	desc := arch.NewDescriptor("http", prefix, addr, port, "0", "https://")
 	return &HTTPLink{
-		arch.NewServiceLink(prefix, addr, port),
+		arch.NewServiceLink(desc),
 		cl,
-		"https://",
 	}
 }
 
@@ -46,7 +45,7 @@ func NewHTTPWrap(h *HTTPLink) arch.Linkage {
 
 //Discover sends a request to the set server links if a service exists
 func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, interface{})) error {
-	path := []string{hl.scheme, hl.GetPrefix(), "discover", target}
+	path := []string{hl.GetDescriptor().Scheme, hl.GetPrefix(), "discover", target}
 	res, err := hl.client.Get(strings.Join(path, "/"))
 
 	if err != nil {
@@ -81,7 +80,7 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, i
 }
 
 //Register  registers a service to the specific server with the meta details as json
-func (hl *HTTPLink) Register(target string, meta arch.MetaMap, cb func(d ...interface{})) error {
+func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d ...interface{})) error {
 	path := []string{"register", target}
 	jsn, err := json.Marshal(meta)
 	url := strings.Join(path, "/")
@@ -111,7 +110,7 @@ func (hl *HTTPLink) Register(target string, meta arch.MetaMap, cb func(d ...inte
 
 //Request provides a means of providing a generic requests to the server
 func (hl *HTTPLink) Request(target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
-	path := []string{hl.scheme, hl.GetPrefix(), target}
+	path := []string{hl.GetDescriptor().Scheme, hl.GetPrefix(), target}
 	var req *http.Request
 	var err error
 
