@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 
+	"code.google.com/p/go-uuid/uuid"
 	"github.com/influx6/composelab/routes"
 	"github.com/influx6/evroll"
 	"github.com/influx6/goutils"
@@ -19,10 +20,12 @@ type Services interface {
 	Dial() error
 	Drop()
 	Location() string
-	Register(string, string, *LinkDescriptor)
-	Unregister(string, string)
 	Discover(string)
 	ServiceName() string
+	Register(string, string, *LinkDescriptor)
+	Unregister(string, string)
+	HasRegistered(string, string) bool
+	GetServices(string) *goutils.Map
 }
 
 //Linkage defines the link interface, links are like encapsulation of connection methods which allow the communication
@@ -36,7 +39,7 @@ type Linkage interface {
 	GetPort() int
 	Discover(string, func(string, interface{}, interface{})) error
 	Register(string, *LinkDescriptor, func(...interface{})) error
-	Request(string, io.Reader, func(...interface{}), func(...interface{})) error
+	Request(string, string, io.Reader, func(...interface{}), func(...interface{})) error
 	Dial()
 	End()
 }
@@ -49,6 +52,18 @@ type UDPPack struct {
 	Data    []byte         `json:"data"`
 	Address *net.UDPAddr   `json:"address"`
 	Visited []*net.UDPAddr `json:"visited"`
+}
+
+//NewUDPPack creates a new udp packet
+func NewUDPPack(path, service, uuid string, data []byte, addr *net.UDPAddr, vs []*net.UDPAddr) *UDPPack {
+	return &UDPPack{
+		path,
+		service,
+		uuid,
+		data,
+		addr,
+		vs,
+	}
 }
 
 //Service is the base struct defining attributes of a service
@@ -70,6 +85,7 @@ type LinkDescriptor struct {
 	Scheme  string                 `json:"scheme"`
 	Misc    map[string]interface{} `json:"misc"`
 	Proto   string                 `json:"proto"`
+	UUID    string                 `json:"uuid"`
 }
 
 //NewDescriptor creates a new LinkDescriptor
@@ -82,6 +98,7 @@ func NewDescriptor(proto string, name string, addr string, port int, zone string
 		scheme,
 		make(map[string]interface{}),
 		proto,
+		uuid.New(),
 	}
 }
 
@@ -110,7 +127,7 @@ func (s *ServiceLink) Discover(f string, b func(s string, data interface{}, res 
 }
 
 //Request is an empty for handling service link discover
-func (s *ServiceLink) Request(f string, bd io.Reader, before func(m ...interface{}), after func(m ...interface{})) error {
+func (s *ServiceLink) Request(f string, target string, bd io.Reader, before func(m ...interface{}), after func(m ...interface{})) error {
 	return nil
 }
 
@@ -119,12 +136,17 @@ func (s *ServiceLink) Register(sm string, m *LinkDescriptor, cf func(sets ...int
 	return nil
 }
 
-//GetPrefix returns the prefix of the service
+//GetUUID returns the UUID string of the service link
+func (s *ServiceLink) GetUUID() string {
+	return s.desc.UUID
+}
+
+//GetPrefix returns the prefix of the service link
 func (s *ServiceLink) GetPrefix() string {
 	return s.desc.Service
 }
 
-//GetPath returns the path of the service
+//GetPath returns the path of the service link
 func (s *ServiceLink) GetPath() string {
 	return fmt.Sprintf("%s:%d", s.GetAddress(), s.GetPort())
 }
@@ -229,7 +251,7 @@ func (s *Service) Location() string {
 }
 
 //Register adds a servicelink into the services connection pool
-func (s *Service) Register(serviceName string, uuid string, meta LinkDescriptor) {
+func (s *Service) Register(serviceName string, uuid string, meta *LinkDescriptor) {
 	if s.Registry.Has(serviceName) {
 
 		sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
@@ -268,4 +290,45 @@ func (s *Service) Unregister(serviceName string, uuid string) {
 	}
 
 	sector.Remove(uuid)
+}
+
+//HasRegistered checks whether a particular service of a specific serviceName is registered
+//and if supplied checks whether there exists a provider with the uuid
+func (s *Service) HasRegistered(serviceName string, uuid string) bool {
+	if !s.Registry.Has(serviceName) {
+		return false
+	}
+
+	sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
+
+	if !ok {
+		return false
+	}
+
+	if uuid == "" {
+		return true
+	}
+
+	if !sector.Has(uuid) {
+		return false
+	}
+
+	return true
+}
+
+//GetServices returns a goutils.Map containing register services under the
+//serviceName provided and supplies a secondary error argument to indicate
+//error
+func (s *Service) GetServices(serviceName string) (*goutils.Map, error) {
+	if !s.Registry.Has(serviceName) {
+		return nil, fmt.Errorf("%s not found", serviceName)
+	}
+
+	sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
+
+	if !ok {
+		return nil, fmt.Errorf("Conversion errror %v %s", ok, serviceName)
+	}
+
+	return sector, nil
 }

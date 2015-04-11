@@ -3,6 +3,7 @@ package links
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"io/ioutil"
 	"log"
@@ -21,7 +22,7 @@ type HTTPLink struct {
 
 //NewHTTPLink returns a new http service link
 func NewHTTPLink(prefix string, addr string, port int) *HTTPLink {
-	desc := arch.NewDescriptor("http", prefix, addr, port, "0", "http://")
+	desc := arch.NewDescriptor("http", prefix, addr, port, "0", "http")
 	return &HTTPLink{
 		arch.NewServiceLink(desc),
 		new(http.Client),
@@ -31,7 +32,7 @@ func NewHTTPLink(prefix string, addr string, port int) *HTTPLink {
 //NewSecureHTTPLink returns a new http service link
 func NewSecureHTTPLink(prefix string, addr string, port int, trans *http.Transport) *HTTPLink {
 	cl := &http.Client{Transport: trans}
-	desc := arch.NewDescriptor("http", prefix, addr, port, "0", "https://")
+	desc := arch.NewDescriptor("http", prefix, addr, port, "0", "https")
 	return &HTTPLink{
 		arch.NewServiceLink(desc),
 		cl,
@@ -81,15 +82,14 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, i
 
 //Register  registers a service to the specific server with the meta details as json
 func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d ...interface{})) error {
-	path := []string{"register", target}
 	jsn, err := json.Marshal(meta)
-	url := strings.Join(path, "/")
+	url := fmt.Sprintf("%s/%s", "register", target)
 
 	if err != nil {
 		return err
 	}
 
-	return hl.Request(url, bytes.NewReader(jsn), func(sets ...interface{}) {
+	return hl.Request(url, target, bytes.NewReader(jsn), func(sets ...interface{}) {
 		rq := sets[0]
 		req, ok := rq.(*http.Request)
 
@@ -100,6 +100,7 @@ func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d
 		}
 
 		req.Header.Set("X-Service-Request", hl.GetPath())
+		req.Header.Set("X-Service-UUID", meta.UUID)
 		req.Header.Set("Content-Type", "application/json")
 
 	}, func(resd ...interface{}) {
@@ -109,20 +110,20 @@ func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d
 }
 
 //Request provides a means of providing a generic requests to the server
-func (hl *HTTPLink) Request(target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
-	path := []string{hl.GetDescriptor().Scheme, hl.GetPrefix(), target}
+func (hl *HTTPLink) Request(tpath, target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
+	path := fmt.Sprintf("%s://%s/%s", hl.GetDescriptor().Scheme, hl.GetPrefix(), tpath)
 	var req *http.Request
 	var err error
 
 	if body == nil {
-		req, err = http.NewRequest("GET", strings.Join(path, "/"), body)
+		req, err = http.NewRequest("GET", path, body)
 
 		if err != nil {
 			return err
 		}
 
 	} else {
-		req, err = http.NewRequest("POST", strings.Join(path, "/"), body)
+		req, err = http.NewRequest("POST", path, body)
 
 		if err != nil {
 			return err

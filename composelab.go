@@ -8,8 +8,14 @@ type Master struct {
 }
 
 //NewMaster creates a new master service struct
-func NewMaster(addr string, port int) *Master {
-	sm := services.NewHTTPSlave("master", addr, port, nil)
+func NewMaster(addr string, port int, cert *services.HTTPCert) *Master {
+	var sm *services.HTTPService
+
+	if cert == nil {
+		sm = services.NewHTTPService("master", addr, port, nil)
+	} else {
+		sm = services.NewHTTPSecureService("master", addr, port, cert, nil)
+	}
 
 	// reg, err := sm.Select("register")
 	//

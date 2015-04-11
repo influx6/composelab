@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 
-	"code.google.com/p/go-uuid/uuid"
 	"github.com/influx6/composelab/arch"
 	"github.com/influx6/goutils"
 )
@@ -17,7 +16,8 @@ import (
 type UDPLink struct {
 	*arch.ServiceLink
 	Conn   *net.UDPConn
-	Addr   *net.UDPAddr
+	ToAddr *net.UDPAddr
+	MyAddr *net.UDPAddr
 	buffer []byte
 	closer chan interface{}
 }
@@ -32,12 +32,20 @@ func NewUDPLink(serviceName string, addr string, port int) (*UDPLink, error) {
 		return nil, err
 	}
 
+	cAddr, err := net.ResolveUDPAddr("udp4", ":0")
+
+	if err != nil {
+		log.Fatal("Error generating custom client udp address: ", err, cAddr)
+		return nil, err
+	}
+
 	desc := arch.NewDescriptor("udp", serviceName, addr, udpAddr.Port, udpAddr.Zone, "udp4")
 
 	return &UDPLink{
 		arch.NewServiceLink(desc),
 		nil,
 		udpAddr,
+		cAddr,
 		make([]byte, 1024),
 		make(chan interface{}),
 	}, nil
@@ -74,14 +82,7 @@ func (u *UDPLink) Dial() {
 		return
 	}
 
-	cAddr, err := net.ResolveUDPAddr("udp4", ":0")
-
-	if err != nil {
-		log.Fatal("Error generating custom client udp address: ", err, cAddr, u)
-		return
-	}
-
-	conn, err := net.DialUDP("udp", cAddr, u.Addr)
+	conn, err := net.DialUDP("udp", u.MyAddr, u.ToAddr)
 
 	if err != nil {
 		log.Fatalf("Error creating udp connection: %v %s", err, u.GetPath())
@@ -106,7 +107,7 @@ func (u *UDPLink) End() {
 
 //Discover meets the Linkage interface to request discovery from a server
 func (u *UDPLink) Discover(target string, callback func(string, interface{}, interface{})) error {
-	return u.Request(fmt.Sprintf("%s:%s", "discover", target), nil, nil, func(d ...interface{}) {
+	return u.Request(fmt.Sprintf("%s/%s", "discover", target), target, nil, nil, func(d ...interface{}) {
 		//do something interesting
 		jsm := d[1]
 		rsm := d[0]
@@ -144,7 +145,7 @@ func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback fu
 
 	r, w := io.Pipe()
 
-	err = u.Request(fmt.Sprintf("%s:%s", "register", target), r, nil, func(d ...interface{}) {
+	err = u.Request(fmt.Sprintf("%s:%s", "register", target), target, r, nil, func(d ...interface{}) {
 		//do something interesting
 		callback(d...)
 	})
@@ -155,7 +156,7 @@ func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback fu
 }
 
 //Request sends information to the server for a response
-func (u *UDPLink) Request(target string, body io.Reader, before func(st ...interface{}), after func(smt ...interface{})) error {
+func (u *UDPLink) Request(tpath, target string, body io.Reader, before func(st ...interface{}), after func(smt ...interface{})) error {
 
 	var bits []byte
 
@@ -168,14 +169,12 @@ func (u *UDPLink) Request(target string, body io.Reader, before func(st ...inter
 		}
 	}
 
-	jp := &arch.UDPPack{
-		fmt.Sprintf("%s/%s", u.GetPrefix(), target),
-		target,
-		uuid.New(),
-		bits,
-		u.Addr,
-		make([]*net.UDPAddr, 0),
-	}
+	log.Println("requesting", target, u.GetPrefix(), fmt.Sprintf("%s/%s", u.GetPrefix(), target))
+
+	path := fmt.Sprintf("%s/%s", u.GetPrefix(), tpath)
+	vs := []*net.UDPAddr{u.ToAddr}
+
+	jp := arch.NewUDPPack(path, target, u.GetUUID(), bits, u.MyAddr, vs)
 
 	if before != nil {
 		before(jp, target)

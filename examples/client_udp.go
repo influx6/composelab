@@ -10,7 +10,7 @@ import (
 func main() {
 
 	wc := new(sync.WaitGroup)
-	link, err := links.NewUDPLink("go", "127.0.0.1", 3000)
+	link, err := links.NewUDPLink("flux", "127.0.0.1", 6300)
 
 	if err != nil {
 		log.Println("Error occured:", err)
@@ -21,7 +21,7 @@ func main() {
 
 	wc.Add(1)
 
-	link.Discover("/fluv", func(target string, data interface{}, ud interface{}) {
+	link.Discover("fluv", func(target string, data interface{}, ud interface{}) {
 		log.Println("target:", target, data, ud)
 		wc.Done()
 	})

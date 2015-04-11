@@ -1,54 +1,22 @@
 package main
 
 import (
-	"encoding/json"
 	"log"
-	"net"
 
-	"github.com/influx6/composelab/arch"
+	"github.com/influx6/composelab/services"
 )
 
 func main() {
 
-	udpAddr, err := net.ResolveUDPAddr("udp4", "127.0.0.1:3000")
-	end := make(chan interface{})
+	// wc := new(sync.WaitGroup)
+	ud, err := services.NewUDPService("flux", "127.0.0.1", 6300, nil)
 
 	if err != nil {
-		return
+		log.Fatal("Error occured in creating service", err, ud)
 	}
 
-	conn, err := net.ListenUDP("udp", udpAddr)
+	// wc.Add(1)
+	ud.Dial()
 
-	if err != nil {
-		return
-	}
-
-	buf := make([]byte, 1024)
-
-	for {
-		select {
-		case <-end:
-			log.Println("closing connection")
-			conn.Close()
-		default:
-			len, addr, err := conn.ReadFromUDP(buf)
-
-			if err != nil {
-				log.Println("Error", err)
-				end <- 1
-				return
-			}
-
-			data := buf[:len]
-
-			var jx = new(arch.UDPPack)
-			err = json.Unmarshal(data, jx)
-
-			log.Println("server received data:", addr, jx, err, string(data))
-
-			conn.WriteTo(data, addr)
-
-		}
-	}
-
+	// wc.Wait()
 }
