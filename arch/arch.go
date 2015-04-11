@@ -1,6 +1,7 @@
 package arch
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -23,9 +24,9 @@ type Services interface {
 	Discover(string)
 	ServiceName() string
 	Register(string, string, *LinkDescriptor)
-	Unregister(string, string)
-	HasRegistered(string, string) bool
-	GetServices(string) *goutils.Map
+	Unregister(string)
+	HasRegistered(string) bool
+	GetServices(string) *LinkDescriptor
 }
 
 //Linkage defines the link interface, links are like encapsulation of connection methods which allow the communication
@@ -46,25 +47,36 @@ type Linkage interface {
 
 //UDPPack represents a standard json udp message
 type UDPPack struct {
-	Path    string         `json:"path"`
-	Service string         `json:"service"`
-	UUID    string         `json:"uuid"`
-	Data    []byte         `json:"data"`
-	Address *net.UDPAddr   `json:"address"`
-	Visited []*net.UDPAddr `json:"visited"`
+	Path    string       `json:"path"`
+	Service string       `json:"service"`
+	UUID    string       `json:"uuid"`
+	Data    []byte       `json:"data"`
+	Address *net.UDPAddr `json:"address"`
+	// Visited []*net.UDPAddr `json:"visited"`
 }
 
 //NewUDPPack creates a new udp packet
-func NewUDPPack(path, service, uuid string, data []byte, addr *net.UDPAddr, vs []*net.UDPAddr) *UDPPack {
+func NewUDPPack(path, service, uuid string, data []byte, addr *net.UDPAddr) *UDPPack {
 	return &UDPPack{
 		path,
 		service,
 		uuid,
 		data,
 		addr,
-		vs,
 	}
 }
+
+//UDPPackFrom creates a new udp packet from a previous one with only the data
+//and addr changed
+func UDPPackFrom(u *UDPPack, data []byte, addr *net.UDPAddr) *UDPPack {
+	return NewUDPPack(u.Path, u.Service, u.UUID, data, addr)
+}
+
+//MarshalJSON returns the json byte version of the LinkDescriptor
+// func (u *UDPPack) MarshalJSON() ([]byte, error) {
+// 	lb, err := json.Marshal(u)
+// 	return lb, err
+// }
 
 //Service is the base struct defining attributes of a service
 type Service struct {
@@ -72,7 +84,7 @@ type Service struct {
 	descrptior *LinkDescriptor
 	Master     Linkage
 	Slaves     *goutils.Map
-	Registry   *goutils.Map
+	registry   *goutils.Map
 	Route      *routes.Routes
 }
 
@@ -86,6 +98,12 @@ type LinkDescriptor struct {
 	Misc    map[string]interface{} `json:"misc"`
 	Proto   string                 `json:"proto"`
 	UUID    string                 `json:"uuid"`
+}
+
+// MarshalJSON returns the json byte version of the LinkDescriptor
+func (l *LinkDescriptor) MarshalJSON() ([]byte, error) {
+	lb, err := json.Marshal(l)
+	return lb, err
 }
 
 //NewDescriptor creates a new LinkDescriptor
@@ -251,84 +269,36 @@ func (s *Service) Location() string {
 }
 
 //Register adds a servicelink into the services connection pool
-func (s *Service) Register(serviceName string, uuid string, meta *LinkDescriptor) {
-	if s.Registry.Has(serviceName) {
-
-		sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
-
-		if !ok {
-			return
-		}
-
-		if sector.Has(uuid) {
-			return
-		}
-
-		sector.Set(uuid, meta)
-	} else {
-		smap := goutils.NewMap()
-		s.Registry.Set(serviceName, smap)
-		smap.Set(uuid, meta)
+func (s *Service) Register(serviceName string, meta *LinkDescriptor) {
+	if !s.registry.Has(serviceName) {
+		s.registry.Set(serviceName, meta)
 	}
-
 }
 
 //Unregister removes a servicelink from the services connection pool
-func (s *Service) Unregister(serviceName string, uuid string) {
-	if !s.Registry.Has(serviceName) {
-		return
-	}
-
-	sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
-
-	if !ok {
-		return
-	}
-
-	if !sector.Has(uuid) {
-		return
-	}
-
-	sector.Remove(uuid)
+func (s *Service) Unregister(serviceName string) {
+	s.registry.Remove(serviceName)
 }
 
 //HasRegistered checks whether a particular service of a specific serviceName is registered
 //and if supplied checks whether there exists a provider with the uuid
-func (s *Service) HasRegistered(serviceName string, uuid string) bool {
-	if !s.Registry.Has(serviceName) {
-		return false
-	}
-
-	sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
-
-	if !ok {
-		return false
-	}
-
-	if uuid == "" {
-		return true
-	}
-
-	if !sector.Has(uuid) {
-		return false
-	}
-
-	return true
+func (s *Service) HasRegistered(serviceName string) bool {
+	return s.registry.Has(serviceName)
 }
 
-//GetServices returns a goutils.Map containing register services under the
+//GetServiceProvider returns a goutils.Map containing register services under the
 //serviceName provided and supplies a secondary error argument to indicate
 //error
-func (s *Service) GetServices(serviceName string) (*goutils.Map, error) {
-	if !s.Registry.Has(serviceName) {
+func (s *Service) GetServiceProvider(serviceName string) (*LinkDescriptor, error) {
+	if !s.registry.Has(serviceName) {
 		return nil, fmt.Errorf("%s not found", serviceName)
 	}
 
-	sector, ok := s.Registry.Get(serviceName).(*goutils.Map)
+	li, ok := s.registry.Get(serviceName).(*LinkDescriptor)
 
 	if !ok {
-		return nil, fmt.Errorf("Conversion errror %v %s", ok, serviceName)
+		return nil, fmt.Errorf("%s unable to convert to LinkDescriptor %v", serviceName, li)
 	}
 
-	return sector, nil
+	return li, nil
 }

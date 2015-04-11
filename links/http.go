@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"strings"
 
+	"code.google.com/p/go-uuid/uuid"
+
 	"github.com/influx6/composelab/arch"
 )
 
@@ -99,8 +101,8 @@ func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d
 			return
 		}
 
-		req.Header.Set("X-Service-Request", hl.GetPath())
 		req.Header.Set("X-Service-UUID", meta.UUID)
+		req.Header.Set("X-Request-UUID", uuid.New())
 		req.Header.Set("Content-Type", "application/json")
 
 	}, func(resd ...interface{}) {
@@ -110,8 +112,8 @@ func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d
 }
 
 //Request provides a means of providing a generic requests to the server
-func (hl *HTTPLink) Request(tpath, target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
-	path := fmt.Sprintf("%s://%s/%s", hl.GetDescriptor().Scheme, hl.GetPrefix(), tpath)
+func (hl *HTTPLink) Request(fpath, target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
+	path := fmt.Sprintf("%s://%s/%s", hl.GetDescriptor().Scheme, hl.GetPrefix(), fpath)
 	var req *http.Request
 	var err error
 
@@ -129,6 +131,9 @@ func (hl *HTTPLink) Request(tpath, target string, body io.Reader, before func(r 
 			return err
 		}
 	}
+
+	req.Header.Set("X-Service-Request", hl.GetPath())
+	req.Header.Set("X-Service-Request-Target", target)
 
 	before(req, target)
 

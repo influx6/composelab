@@ -114,6 +114,19 @@ var WhenUDP = func(checkDesc bool, g *grids.GridPacket, norm UDPNorm) {
 	norm(nil, udp)
 }
 
+//ResponseError responds to a udp pack with a generic error map
+var ResponseError = func(u *arch.UDPPack, um *UDPService) {
+	ub := arch.UDPPackFrom(u, []byte("{ error:'not found!'}"), um.Addr)
+	ubinx, err := json.Marshal(ub)
+
+	if err != nil {
+		log.Fatal("Unable to create udppack for: ", err, ubinx, ub)
+		return
+	}
+
+	um.Server.WriteTo(ubinx, u.Address)
+}
+
 //NewUDPService returns a new udp service struct
 func NewUDPService(serviceName string, addr string, port int, master arch.Linkage) (*UDPService, error) {
 	uaddr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", addr, port))
@@ -140,7 +153,7 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 			log.Println("/register receieves", g)
 
 			WhenUDP(true, g, func(li *arch.LinkDescriptor, u *arch.UDPPack) {
-				um.Register(u.Service, u.UUID, li)
+				um.Register(u.Service, li)
 			})
 
 		}))
@@ -152,16 +165,38 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 		disc.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
 			log.Println("/discover receieves", g)
 			WhenUDP(false, g, func(_ *arch.LinkDescriptor, u *arch.UDPPack) {
-				if um.HasRegistered(u.Service, "") {
-					reply := arch.NewUDPPack(fmt.Sprintf("/%s", u.Service), u.Service, um.GetDescriptor().UUID, []byte("success"), um.Addr, nil)
-					jsx, err := json.Marshal(reply)
+				if um.HasRegistered(u.Service) {
+					li, err := um.GetServiceProvider(u.Service)
 
 					if err != nil {
-						log.Fatal("Error creating udp reply", reply, um)
+						log.Fatal("Unable to find service: ", u.Service, u)
 						return
 					}
 
-					um.Server.WriteTo(jsx, u.Address)
+					// bin, err := json.Marshal(li)
+					bin, err := li.MarshalJSON()
+
+					log.Println("do we get it", bin, err)
+
+					if err != nil {
+						log.Fatal("Unable to jsonify service linkdescriptor: ", err, li)
+						return
+					}
+
+					ub := arch.UDPPackFrom(u, bin, um.Addr)
+					ubinx, err := json.Marshal(ub)
+
+					log.Println("jsonget", ubinx, err)
+
+					if err != nil {
+						log.Fatal("Unable to create udppack for: ", err, li, ubinx, ub)
+						return
+					}
+
+					um.Server.WriteTo(ubinx, u.Address)
+
+				} else {
+					ResponseError(u, um)
 				}
 			})
 		}))

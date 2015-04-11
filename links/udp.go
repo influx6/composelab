@@ -8,6 +8,8 @@ import (
 	"log"
 	"net"
 
+	"code.google.com/p/go-uuid/uuid"
+
 	"github.com/influx6/composelab/arch"
 	"github.com/influx6/goutils"
 )
@@ -172,14 +174,14 @@ func (u *UDPLink) Request(tpath, target string, body io.Reader, before func(st .
 	log.Println("requesting", target, u.GetPrefix(), fmt.Sprintf("%s/%s", u.GetPrefix(), target))
 
 	path := fmt.Sprintf("%s/%s", u.GetPrefix(), tpath)
-	vs := []*net.UDPAddr{u.ToAddr}
 
-	jp := arch.NewUDPPack(path, target, u.GetUUID(), bits, u.MyAddr, vs)
+	jp := arch.NewUDPPack(path, target, uuid.New(), bits, u.MyAddr)
 
 	if before != nil {
 		before(jp, target)
 	}
 
+	// jsn, err := jp.MarshalJSON()
 	jsn, err := json.Marshal(jp)
 
 	if err != nil {
