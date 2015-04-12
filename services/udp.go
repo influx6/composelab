@@ -174,7 +174,6 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 
 	if err == nil {
 		disc.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
-			log.Println("/discover receieves", g)
 			WhenUDP(false, g, func(_ *arch.LinkDescriptor, u *arch.UDPPack) {
 				if um.HasRegistered(u.Service) {
 					li, err := um.GetServiceProvider(u.Service)
@@ -214,7 +213,6 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 
 	if err == nil {
 		unreg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
-			log.Println("/unregister receieves", g)
 			WhenUDP(true, g, func(li *arch.LinkDescriptor, u *arch.UDPPack) {
 				um.Unregister(u.Service, li)
 				ResponseSuccess(u, um)
