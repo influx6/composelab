@@ -8,7 +8,6 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
-	"strings"
 
 	"code.google.com/p/go-uuid/uuid"
 
@@ -48,38 +47,59 @@ func NewHTTPWrap(h *HTTPLink) arch.Linkage {
 
 //Discover sends a request to the set server links if a service exists
 func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, interface{})) error {
-	path := []string{hl.GetDescriptor().Scheme, hl.GetPrefix(), "discover", target}
-	res, err := hl.client.Get(strings.Join(path, "/"))
+	url := fmt.Sprintf("%s/%s", "discover", target)
 
-	if err != nil {
-		log.Fatal(err)
-		return err
-	}
+	return hl.Request(url, target, nil, func(sets ...interface{}) {
+		rq := sets[0]
+		req, ok := rq.(*http.Request)
 
-	defer res.Body.Close()
-	status := res.StatusCode
+		// cb := sets[1]
 
-	if status == 200 || status == 201 || status == 304 {
-		body, err := ioutil.ReadAll(res.Body)
-
-		if err != nil {
-			log.Fatal(err)
-			return err
+		if !ok {
+			return
 		}
 
-		jsn := map[string]interface{}{}
+		req.Header.Set("X-Request-UUID", uuid.New())
+		req.Header.Set("Content-Type", "application/json")
 
-		err = json.Unmarshal(body, jsn)
+	}, func(rsd ...interface{}) {
 
-		if err != nil {
-			log.Fatal(err)
-			return err
+		body, ok := rsd[0].([]byte)
+
+		if !ok {
+			log.Fatal("body not available", body)
+			return
 		}
 
-		callback(target, jsn, res)
-	}
+		res, ok := rsd[1].(http.Response)
 
-	return nil
+		if !ok {
+			log.Fatal("response object not available", res)
+			return
+		}
+
+		req, ok := rsd[2].(*http.Request)
+
+		if !ok {
+			log.Fatal("request object not available", req)
+			return
+		}
+
+		status := res.StatusCode
+
+		if status == 200 || status == 201 || status == 304 {
+
+			jsn := map[string]interface{}{}
+			err := json.Unmarshal(body, jsn)
+
+			if err != nil {
+				log.Fatal(err)
+				return
+			}
+
+			callback(target, jsn, res)
+		}
+	})
 }
 
 //Register  registers a service to the specific server with the meta details as json
@@ -144,7 +164,7 @@ func (hl *HTTPLink) Unregister(target string, meta *arch.LinkDescriptor, cb func
 
 //Request provides a means of providing a generic requests to the server
 func (hl *HTTPLink) Request(fpath, target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
-	path := fmt.Sprintf("%s://%s/%s", hl.GetDescriptor().Scheme, hl.GetPrefix(), fpath)
+	path := fmt.Sprintf("%s://%s/%s/%s", hl.GetDescriptor().Scheme, hl.GetPath(), hl.GetPrefix(), fpath)
 	var req *http.Request
 	var err error
 
@@ -169,6 +189,8 @@ func (hl *HTTPLink) Request(fpath, target string, body io.Reader, before func(r 
 	before(req, target)
 
 	res, err := hl.client.Do(req)
+
+	log.Println("sending request", fpath, target, res, err, req)
 
 	if err != nil {
 		return err

@@ -30,15 +30,14 @@ func (m *HTTPService) Dial() error {
 				log.Println("sending off packet", r.URL.Path)
 			})
 		}))
-	} else {
-		return http.ListenAndServe(m.GetPath(), http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
-			m.Route.IssueRequestPath(r.URL.Path, func(pack *grids.GridPacket) {
-				pack.Set("Req", r)
-				pack.Set("Res", rw)
-				log.Println("sending off packet", r.URL.Path)
-			})
-		}))
 	}
+	return http.ListenAndServe(m.GetPath(), http.HandlerFunc(func(rw http.ResponseWriter, r *http.Request) {
+		m.Route.IssueRequestPath(r.URL.Path, func(pack *grids.GridPacket) {
+			pack.Set("Req", r)
+			pack.Set("Res", rw)
+			log.Println("sending off packet", r.URL.Path)
+		})
+	}))
 }
 
 //NewHTTPFactory creates a new slave service struct
@@ -57,7 +56,7 @@ func NewHTTPFactory(serviceName string, slaveAddr string, slavePort int, cert *H
 	reg, err := sm.Select("register")
 
 	if err == nil {
-		reg.Terminal().Only(grids.ByPackets(func(g *grids.GridPacket) {
+		reg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
 			log.Println("/register receieves", g)
 		}))
 	}
@@ -65,7 +64,7 @@ func NewHTTPFactory(serviceName string, slaveAddr string, slavePort int, cert *H
 	disc, err := sm.Select("discover")
 
 	if err == nil {
-		disc.Terminal().Only(grids.ByPackets(func(g *grids.GridPacket) {
+		disc.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
 			log.Println("/discover receieves", g)
 		}))
 	}
@@ -73,7 +72,7 @@ func NewHTTPFactory(serviceName string, slaveAddr string, slavePort int, cert *H
 	unreg, err := sm.Select("unregister")
 
 	if err == nil {
-		unreg.Terminal().Only(grids.ByPackets(func(g *grids.GridPacket) {
+		unreg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
 			log.Println("/unregister receieves", g)
 		}))
 	}
