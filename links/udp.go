@@ -136,9 +136,10 @@ func (u *UDPLink) Discover(target string, callback func(string, interface{}, int
 	})
 }
 
-//Register sends off a service meta information to the server
-func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback func(data ...interface{})) error {
+//Unregister sends off a service meta information deregistration to the server
+func (u *UDPLink) Unregister(target string, meta *arch.LinkDescriptor, callback func(data ...interface{})) error {
 	jsm, err := json.Marshal(meta)
+	// jsm, err := meta.MarshalJSON()
 
 	if err != nil {
 		log.Fatalf("error occured in coverting map with json %v %v", meta, err)
@@ -147,35 +148,72 @@ func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback fu
 
 	r, w := io.Pipe()
 
-	err = u.Request(fmt.Sprintf("%s:%s", "register", target), target, r, nil, func(d ...interface{}) {
+	go func() {
+		defer w.Close()
+		w.Write(jsm)
+	}()
+
+	err = u.Request(fmt.Sprintf("%s/%s", "unregister", target), target, r, nil, func(d ...interface{}) {
 		//do something interesting
-		callback(d...)
+		if callback != nil {
+			callback(d...)
+		}
 	})
 
-	w.Write(jsm)
+	return err
+}
+
+//Register sends off a service meta information to the server
+func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback func(data ...interface{})) error {
+	jsm, err := json.Marshal(meta)
+	// jsm, err := meta.MarshalJSON()
+
+	if err != nil {
+		log.Fatalf("error occured in coverting map with json %v %v", meta, err)
+		return err
+	}
+
+	r, w := io.Pipe()
+
+	go func() {
+		defer w.Close()
+		w.Write(jsm)
+	}()
+
+	err = u.Request(fmt.Sprintf("%s/%s", "register", target), target, r, nil, func(d ...interface{}) {
+		//do something interesting
+		if callback != nil {
+			callback(d...)
+		}
+	})
 
 	return err
 }
 
 //Request sends information to the server for a response
 func (u *UDPLink) Request(tpath, target string, body io.Reader, before func(st ...interface{}), after func(smt ...interface{})) error {
-
-	var bits []byte
-
-	if body != nil {
-		bits, err := ioutil.ReadAll(body)
-
-		if err != nil {
-			log.Fatalf("error occured in reading with reader %v %v %v", body, err, bits)
-			return err
-		}
-	}
-
-	log.Println("requesting", target, u.GetPrefix(), fmt.Sprintf("%s/%s", u.GetPrefix(), target))
-
 	path := fmt.Sprintf("%s/%s", u.GetPrefix(), tpath)
 
-	jp := arch.NewUDPPack(path, target, uuid.New(), bits, u.MyAddr)
+	dataChan := make(chan []byte)
+
+	go func() {
+		defer close(dataChan)
+		if body != nil {
+			d, err := ioutil.ReadAll(body)
+
+			if err == nil {
+				dataChan <- d
+			}
+
+		} else {
+			dataChan <- make([]byte, 0)
+		}
+
+	}()
+
+	dat := <-dataChan
+
+	jp := arch.NewUDPPack(path, target, uuid.New(), dat, u.MyAddr)
 
 	if before != nil {
 		before(jp, target)

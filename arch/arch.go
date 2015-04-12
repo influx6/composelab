@@ -1,7 +1,6 @@
 package arch
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -23,8 +22,8 @@ type Services interface {
 	Location() string
 	Discover(string)
 	ServiceName() string
-	Register(string, string, *LinkDescriptor)
-	Unregister(string)
+	Register(string, *LinkDescriptor)
+	Unregister(string, *LinkDescriptor)
 	HasRegistered(string) bool
 	GetServices(string) *LinkDescriptor
 }
@@ -40,6 +39,7 @@ type Linkage interface {
 	GetPort() int
 	Discover(string, func(string, interface{}, interface{})) error
 	Register(string, *LinkDescriptor, func(...interface{})) error
+	Unregister(string, *LinkDescriptor, func(...interface{})) error
 	Request(string, string, io.Reader, func(...interface{}), func(...interface{})) error
 	Dial()
 	End()
@@ -101,10 +101,10 @@ type LinkDescriptor struct {
 }
 
 // MarshalJSON returns the json byte version of the LinkDescriptor
-func (l *LinkDescriptor) MarshalJSON() ([]byte, error) {
-	lb, err := json.Marshal(l)
-	return lb, err
-}
+// func (l *LinkDescriptor) MarshalJSON() ([]byte, error) {
+// 	lb, err := json.Marshal(l)
+// 	return lb, err
+// }
 
 //NewDescriptor creates a new LinkDescriptor
 func NewDescriptor(proto string, name string, addr string, port int, zone string, scheme string) *LinkDescriptor {
@@ -151,6 +151,11 @@ func (s *ServiceLink) Request(f string, target string, bd io.Reader, before func
 
 //Register is an empty for handling service link registeration for master operations
 func (s *ServiceLink) Register(sm string, m *LinkDescriptor, cf func(sets ...interface{})) error {
+	return nil
+}
+
+//Unregister is an empty for handling service link registeration for master operations
+func (s *ServiceLink) Unregister(sm string, m *LinkDescriptor, cf func(sets ...interface{})) error {
 	return nil
 }
 
@@ -276,8 +281,18 @@ func (s *Service) Register(serviceName string, meta *LinkDescriptor) {
 }
 
 //Unregister removes a servicelink from the services connection pool
-func (s *Service) Unregister(serviceName string) {
-	s.registry.Remove(serviceName)
+func (s *Service) Unregister(serviceName string, meta *LinkDescriptor) {
+	if s.HasRegistered(serviceName) {
+		m, err := s.GetServiceProvider(serviceName)
+
+		if err != nil {
+			return
+		}
+
+		if m.UUID == meta.UUID {
+			s.registry.Remove(serviceName)
+		}
+	}
 }
 
 //HasRegistered checks whether a particular service of a specific serviceName is registered

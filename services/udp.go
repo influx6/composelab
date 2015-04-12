@@ -127,6 +127,19 @@ var ResponseError = func(u *arch.UDPPack, um *UDPService) {
 	um.Server.WriteTo(ubinx, u.Address)
 }
 
+//ResponseSuccess response to a udp pack with a generic success map
+var ResponseSuccess = func(u *arch.UDPPack, um *UDPService) {
+	ub := arch.UDPPackFrom(u, []byte("{ state: 200, error: 'nil'}"), um.Addr)
+	ubinx, err := json.Marshal(ub)
+
+	if err != nil {
+		log.Fatal("Unable to create udppack for: ", err, ubinx, ub)
+		return
+	}
+
+	um.Server.WriteTo(ubinx, u.Address)
+}
+
 //NewUDPService returns a new udp service struct
 func NewUDPService(serviceName string, addr string, port int, master arch.Linkage) (*UDPService, error) {
 	uaddr, err := net.ResolveUDPAddr("udp4", fmt.Sprintf("%s:%d", addr, port))
@@ -150,12 +163,10 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 
 	if err == nil {
 		reg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
-			log.Println("/register receieves", g)
-
 			WhenUDP(true, g, func(li *arch.LinkDescriptor, u *arch.UDPPack) {
 				um.Register(u.Service, li)
+				ResponseSuccess(u, um)
 			})
-
 		}))
 	}
 
@@ -173,10 +184,8 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 						return
 					}
 
-					// bin, err := json.Marshal(li)
-					bin, err := li.MarshalJSON()
-
-					log.Println("do we get it", bin, err)
+					bin, err := json.Marshal(li)
+					// bin, err := li.MarshalJSON()
 
 					if err != nil {
 						log.Fatal("Unable to jsonify service linkdescriptor: ", err, li)
@@ -186,8 +195,6 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 					ub := arch.UDPPackFrom(u, bin, um.Addr)
 					ubinx, err := json.Marshal(ub)
 
-					log.Println("jsonget", ubinx, err)
-
 					if err != nil {
 						log.Fatal("Unable to create udppack for: ", err, li, ubinx, ub)
 						return
@@ -196,6 +203,7 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 					um.Server.WriteTo(ubinx, u.Address)
 
 				} else {
+					log.Println("responding with error")
 					ResponseError(u, um)
 				}
 			})
@@ -207,6 +215,10 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 	if err == nil {
 		unreg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
 			log.Println("/unregister receieves", g)
+			WhenUDP(true, g, func(li *arch.LinkDescriptor, u *arch.UDPPack) {
+				um.Unregister(u.Service, li)
+				ResponseSuccess(u, um)
+			})
 		}))
 	}
 

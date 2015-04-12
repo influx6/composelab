@@ -111,6 +111,37 @@ func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d
 
 }
 
+//Unregister  registers a service to the specific server with the meta details as json
+func (hl *HTTPLink) Unregister(target string, meta *arch.LinkDescriptor, cb func(d ...interface{})) error {
+	jsn, err := json.Marshal(meta)
+	url := fmt.Sprintf("%s/%s", "unregister", target)
+
+	if err != nil {
+		return err
+	}
+
+	return hl.Request(url, target, bytes.NewReader(jsn), func(sets ...interface{}) {
+		rq := sets[0]
+		req, ok := rq.(*http.Request)
+
+		// cb := sets[1]
+
+		if !ok {
+			return
+		}
+
+		// req.Header.Set("Method", "DELETE")
+		req.Method = "DELETE"
+		req.Header.Set("X-Service-UUID", meta.UUID)
+		req.Header.Set("X-Request-UUID", uuid.New())
+		req.Header.Set("Content-Type", "application/json")
+
+	}, func(resd ...interface{}) {
+		cb(resd...)
+	})
+
+}
+
 //Request provides a means of providing a generic requests to the server
 func (hl *HTTPLink) Request(fpath, target string, body io.Reader, before func(r ...interface{}), after func(r ...interface{})) error {
 	path := fmt.Sprintf("%s://%s/%s", hl.GetDescriptor().Scheme, hl.GetPrefix(), fpath)
