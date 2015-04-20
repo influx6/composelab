@@ -71,10 +71,10 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, i
 			return
 		}
 
-		res, ok := rsd[1].(http.Response)
+		res, ok := rsd[1].(*http.Response)
 
 		if !ok {
-			log.Fatal("response object not available", res)
+			log.Fatal("response object not available", res, ok)
 			return
 		}
 
@@ -89,11 +89,11 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, i
 
 		if status == 200 || status == 201 || status == 304 {
 
-			jsn := map[string]interface{}{}
+			jsn := new(arch.LinkDescriptor)
 			err := json.Unmarshal(body, jsn)
 
 			if err != nil {
-				log.Fatal(err)
+				log.Fatal("json umarshalling error with /discover", err, req, res)
 				return
 			}
 
@@ -105,13 +105,13 @@ func (hl *HTTPLink) Discover(target string, callback func(string, interface{}, i
 //Register  registers a service to the specific server with the meta details as json
 func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d ...interface{})) error {
 	jsn, err := json.Marshal(meta)
-	url := fmt.Sprintf("%s/%s", "register", target)
+	// url := fmt.Sprintf("%s/%s", "register", target)
 
 	if err != nil {
 		return err
 	}
 
-	return hl.Request(url, target, bytes.NewReader(jsn), func(sets ...interface{}) {
+	return hl.Request("register", target, bytes.NewReader(jsn), func(sets ...interface{}) {
 		rq := sets[0]
 		req, ok := rq.(*http.Request)
 
@@ -134,13 +134,12 @@ func (hl *HTTPLink) Register(target string, meta *arch.LinkDescriptor, cb func(d
 //Unregister  registers a service to the specific server with the meta details as json
 func (hl *HTTPLink) Unregister(target string, meta *arch.LinkDescriptor, cb func(d ...interface{})) error {
 	jsn, err := json.Marshal(meta)
-	url := fmt.Sprintf("%s/%s", "unregister", target)
-
+	// url := fmt.Sprintf("%s/%s", "unregister", target)
 	if err != nil {
 		return err
 	}
 
-	return hl.Request(url, target, bytes.NewReader(jsn), func(sets ...interface{}) {
+	return hl.Request("unregister", target, bytes.NewReader(jsn), func(sets ...interface{}) {
 		rq := sets[0]
 		req, ok := rq.(*http.Request)
 
@@ -154,7 +153,7 @@ func (hl *HTTPLink) Unregister(target string, meta *arch.LinkDescriptor, cb func
 		req.Method = "DELETE"
 		req.Header.Set("X-Service-UUID", meta.UUID)
 		req.Header.Set("X-Request-UUID", uuid.New())
-		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("Content-Type", "charset=utf-8;application/json")
 
 	}, func(resd ...interface{}) {
 		cb(resd...)
@@ -190,9 +189,8 @@ func (hl *HTTPLink) Request(fpath, target string, body io.Reader, before func(r 
 
 	res, err := hl.client.Do(req)
 
-	log.Println("sending request", fpath, target, res, err, req)
-
 	if err != nil {
+		log.Fatal("Response errored:", fpath, target, err)
 		return err
 	}
 

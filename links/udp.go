@@ -109,7 +109,7 @@ func (u *UDPLink) End() {
 
 //Discover meets the Linkage interface to request discovery from a server
 func (u *UDPLink) Discover(target string, callback func(string, interface{}, interface{})) error {
-	return u.Request(fmt.Sprintf("%s/%s", "discover", target), target, nil, nil, func(d ...interface{}) {
+	return u.Request("discover", target, nil, nil, func(d ...interface{}) {
 		//do something interesting
 		jsm := d[1]
 		rsm := d[0]
@@ -153,7 +153,7 @@ func (u *UDPLink) Unregister(target string, meta *arch.LinkDescriptor, callback 
 		w.Write(jsm)
 	}()
 
-	err = u.Request(fmt.Sprintf("%s/%s", "unregister", target), target, r, nil, func(d ...interface{}) {
+	err = u.Request("unregister", target, r, nil, func(d ...interface{}) {
 		//do something interesting
 		if callback != nil {
 			callback(d...)
@@ -180,7 +180,7 @@ func (u *UDPLink) Register(target string, meta *arch.LinkDescriptor, callback fu
 		w.Write(jsm)
 	}()
 
-	err = u.Request(fmt.Sprintf("%s/%s", "register", target), target, r, nil, func(d ...interface{}) {
+	err = u.Request("register", target, r, nil, func(d ...interface{}) {
 		//do something interesting
 		if callback != nil {
 			callback(d...)
@@ -201,7 +201,7 @@ func (u *UDPLink) Request(tpath, target string, body io.Reader, before func(st .
 		if body != nil {
 			d, err := ioutil.ReadAll(body)
 
-			if err == nil {
+			if err == nil || err == io.EOF {
 				dataChan <- d
 			}
 

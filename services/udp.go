@@ -162,7 +162,7 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 	reg, err := um.Select("register")
 
 	if err == nil {
-		reg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
+		reg.Terminal().Only(grids.ByPackets(func(g *grids.GridPacket) {
 			WhenUDP(true, g, func(li *arch.LinkDescriptor, u *arch.UDPPack) {
 				um.Register(u.Service, li)
 				ResponseSuccess(u, um)
@@ -173,7 +173,7 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 	disc, err := um.Select("discover")
 
 	if err == nil {
-		disc.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
+		disc.Terminal().Only(grids.ByPackets(func(g *grids.GridPacket) {
 			WhenUDP(false, g, func(_ *arch.LinkDescriptor, u *arch.UDPPack) {
 				if um.HasRegistered(u.Service) {
 					li, err := um.GetServiceProvider(u.Service)
@@ -212,7 +212,7 @@ func NewUDPService(serviceName string, addr string, port int, master arch.Linkag
 	unreg, err := um.Select("unregister")
 
 	if err == nil {
-		unreg.Terminal().Any(grids.ByPackets(func(g *grids.GridPacket) {
+		unreg.Terminal().Only(grids.ByPackets(func(g *grids.GridPacket) {
 			WhenUDP(true, g, func(li *arch.LinkDescriptor, u *arch.UDPPack) {
 				um.Unregister(u.Service, li)
 				ResponseSuccess(u, um)
