@@ -1,6 +1,7 @@
 package routes
 
 import (
+	"log"
 	"testing"
 
 	. "github.com/franela/goblin"
@@ -8,11 +9,34 @@ import (
 	"github.com/influx6/grids"
 )
 
+func TestRouteKeeper(t *testing.T) {
+	gob := Goblin(t)
+
+	gob.Describe("RouteKeeper specification", func() {
+
+		gob.It("can i create a routekeeper", func() {
+			k := NewRouteKeeper(0, nil)
+			gob.Assert(k != nil).IsTrue()
+		})
+
+		gob.It("can i fail a routekeeper", func(done Done) {
+			k := NewRouteKeeper(1, func(f *grids.GridPacket) {
+				gob.Assert(f != nil).IsTrue("we got a gridPacket")
+				log.Println("i just failed in 1ms")
+				done()
+			})
+
+			k.Secure(grids.NewPacket())
+		})
+	})
+
+}
+
 func TestRoute(t *testing.T) {
 	gob := Goblin(t)
-	app := NewRoutes("app") //=> creates a /app route
-	app.Branch(`{id:[\d+]}`)
-	app.Branch("logs/realtime") //=> creates a /app/log/realtime route
+	app := NewRoutes("app", true) //=> creates a /app route
+	app.Branch(`{id:[\d+]}`, true)
+	app.Branch("logs/realtime", true) //=> creates a /app/log/realtime route
 
 	gob.Describe("testing route making type", func() {
 		gob.It("can i create a app route", func() {
@@ -43,7 +67,7 @@ func TestRoute(t *testing.T) {
 
 			gob.Assert(err == nil).IsTrue()
 
-			logs.Terminal().Only(func(req interface{}) {
+			logs.Terminal().Only(func(req interface{}, _ *RouteFinalizer) {
 				_, ok := req.(*grids.GridPacket)
 				gob.Assert(ok).IsTrue()
 				done()
@@ -59,15 +83,20 @@ func TestRoute(t *testing.T) {
 
 			gob.Assert(err == nil).IsTrue()
 
-			id.Terminal().Any(func(req interface{}) {
+			id.Terminal().Any(func(req interface{}, r *RouteFinalizer) {
 				f, ok := req.(*grids.GridPacket)
 				gob.Assert(ok).IsTrue()
 				params, ok := f.Get("Params").(*goutils.Map)
 				gob.Assert(params.Get("id")).Equal("4")
-				d()
+
+				r.Effect(func(r *grids.GridPacket) {
+					gob.Assert(f).Equal(r)
+					d()
+				})
+
 			})
 
-			app.IssueRequestPath("app/4", "400")
+			app.IssueRequestPath("app/4", nil)
 		})
 
 	})

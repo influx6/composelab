@@ -4,22 +4,178 @@
 package routes
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"github.com/influx6/evroll"
 	"github.com/influx6/goutils"
 	"github.com/influx6/grids"
+	"github.com/influx6/immute"
 	"github.com/influx6/reggy"
 )
 
+//RouteFinalizer takes the packets recieved from the routes and packs them into
+//a stack for processing,these stack can be cleared when done or allowed to remain
+//during the lifetime of the route
+type RouteFinalizer struct {
+	flush bool
+	Box   *immute.Sequence
+	Added *evroll.EventRoll
+}
+
+//RouteKeeper takes a gridpacket request then handles it into a blocking chan which
+//lives for a specific period of time-limit,if its time limit is given or else uses
+//a default time limit at which it discards and dies off ,closing its chan
+type RouteKeeper struct {
+	block         chan *grids.GridPacket
+	defaultAction func(*grids.GridPacket)
+	timeout       time.Duration
+	buffered      bool
+	done          bool
+}
+
+//Release returns grids.GridPacket,Error
+//i.e if the timeout is not over and the keeper has not expired
+//then it returns a (gridPacket,nil) else if it has been released then
+//it returns a (nil,ErrorDone) else a (nil,Error) indicating
+//timeout and default action processed
+func (rk *RouteKeeper) Release(cbx func(*grids.GridPacket)) error {
+	p := <-rk.block
+
+	if p == nil {
+		return errors.New("RouteKeeper Expired")
+	}
+
+	if rk.buffered {
+		rk.block <- p
+	} else {
+		rk.done = true
+	}
+
+	cbx(p)
+
+	return nil
+}
+
+// //Close calls a close on the keepers channel
+// func (rk *RouteKeeper) Close() {
+// 	if !rk.done {
+// 		defer close(rk.block)
+// 	}
+// }
+
+//Secure collects the gridPacket to be kept by the routekeeper
+func (rk *RouteKeeper) Secure(g *grids.GridPacket) {
+	go func() {
+		go func() {
+			log.Println("sending into channel timeout", rk.timeout)
+			if rk.done {
+				return
+			}
+			rk.block <- g
+		}()
+
+		log.Println("starting channel timeout", rk.timeout)
+		<-time.After(rk.timeout)
+		// select {
+		// case <-tm:
+		log.Println("closing channel after timeout", rk.timeout)
+
+		if !rk.buffered {
+			defer close(rk.block)
+			if rk.defaultAction != nil {
+				rk.defaultAction(<-rk.block)
+			} else {
+				<-rk.block
+			}
+			rk.done = true
+		}
+	}()
+}
+
+//NewRouteKeeper returns a new routekeeper that locks its gridpacket and waits for a timeout to
+//kill the request
+func NewRouteKeeper(timeout int, fail func(*grids.GridPacket)) *RouteKeeper {
+
+	var mc chan *grids.GridPacket
+	var ms time.Duration
+	var buf bool
+
+	if timeout <= 0 {
+		mc = make(chan *grids.GridPacket, 1)
+		buf = true
+	} else {
+		mc = make(chan *grids.GridPacket)
+		buf = false
+	}
+
+	ms = time.Duration(timeout) * time.Millisecond
+
+	return &RouteKeeper{
+		mc,
+		fail,
+		ms,
+		buf,
+		false,
+	}
+
+}
+
+//NewRouteFinalizer returns a new RouteFinalizer
+func NewRouteFinalizer(f bool) *RouteFinalizer {
+	rf := &RouteFinalizer{
+		f,
+		immute.CreateList(make([]interface{}, 0)),
+		evroll.NewEvent("Added"),
+	}
+
+	rf.Added.Listen(grids.ByPackets(func(data *grids.GridPacket) {
+
+		rf.Box.Add(data, nil)
+	}))
+
+	return rf
+}
+
+//Drop adds a new request gridPacket to the routefinalizer stack for treatment
+func (rf *RouteFinalizer) Drop(g *grids.GridPacket) {
+	rf.Added.Emit(g)
+}
+
+//Walk calls a function through the packets stored within the streampack
+//for the routefinalizer and watches for new packets arrival for response
+func (rf *RouteFinalizer) Walk(cb func(g *grids.GridPacket), fcb func()) {
+	rf.Box.Each(func(data interface{}, key interface{}) interface{} {
+		grids.ByPackets(func(r *grids.GridPacket) {
+			cb(r)
+		})(data)
+		return nil
+	}, func(_ int, _ interface{}) {
+		if fcb != nil {
+			fcb()
+		}
+
+		if rf.flush {
+			rf.Box.Clear()
+		}
+	})
+}
+
+//Effect calls walk to perform the function assigned to handle all packets
+func (rf *RouteFinalizer) Effect(cb func(g *grids.GridPacket)) {
+	rf.Walk(cb, nil)
+}
+
 //Callable represents a func with a interface as argument
-type Callable func(data interface{})
+type Callable func(data interface{}, r *RouteFinalizer)
 
 //RouteTypes is the standard defining interface for all routables
 type RouteTypes interface {
 	Select(string) (*Routes, error)
-	Branch(string)
+	Branch(string, bool)
 	Divert(*Routes) *Routes
 	Terminal() *Terminal
 }
@@ -33,19 +189,23 @@ type TerminalType interface {
 //Terminal defines a means of providing events that simplifies the
 //attaching for routes
 type Terminal struct {
-	OnlyEvents *evroll.EventRoll
-	AllEvents  *evroll.EventRoll
+	Loose  *RouteFinalizer //is emitted when path is within terminal's route
+	Strict *RouteFinalizer //is emitted only when path is terminal's route
 	// Route      *Routes
 }
 
 //Any adds a callback to listen to all events passing the AllEvents handler
-func (t *Terminal) Any(c evroll.Callabut) {
-	t.AllEvents.Listen(c)
+func (t *Terminal) Any(c Callable) {
+	t.Loose.Added.Listen(func(d interface{}) {
+		c(d, t.Loose)
+	})
 }
 
 //Only adds a callback to listen to events on the OnlyEvent handler
-func (t *Terminal) Only(c evroll.Callabut) {
-	t.OnlyEvents.Listen(c)
+func (t *Terminal) Only(c Callable) {
+	t.Strict.Added.Listen(func(d interface{}) {
+		c(d, t.Strict)
+	})
 }
 
 //Routes is the base struct for defining interlinking routes
@@ -63,7 +223,9 @@ func (r *Routes) IssueRequestPath(path string, before func(*grids.GridPacket)) {
 	pack := grids.NewPacket()
 	pack.Set("Pathways", goutils.SplitPatternAndRemovePrefix(path))
 	//send off the request
-	before(pack)
+	if before != nil {
+		before(pack)
+	}
 	r.InSend("Request", pack)
 }
 
@@ -95,7 +257,7 @@ func (r *Routes) Divert(rw *Routes) *Routes {
 
 //Branch defines the member function of a route that defines the set
 //of given pathways
-func (r *Routes) Branch(path string) {
+func (r *Routes) Branch(path string, drop bool) {
 	if path == "" {
 		return
 	}
@@ -107,7 +269,7 @@ func (r *Routes) Branch(path string) {
 	}
 
 	first := parts[0]
-	cur := NewRoutes(first)
+	cur := NewRoutes(first, drop)
 	rem := parts[1:]
 
 	r.Links.Set(cur.Path, cur)
@@ -117,7 +279,7 @@ func (r *Routes) Branch(path string) {
 		return
 	}
 
-	cur.Branch(strings.Join(rem, "/"))
+	cur.Branch(strings.Join(rem, "/"), drop)
 }
 
 //Has returns true or false if a route exists
@@ -183,29 +345,29 @@ func (r *Routes) Terminal() *Terminal {
 }
 
 //NewTerm returns a terminal connected to a specific route
-func NewTerm() *Terminal {
+func NewTerm(drop bool) *Terminal {
 	term := &Terminal{
-		evroll.NewEvent("Only"),
-		evroll.NewEvent("Any"),
+		NewRouteFinalizer(drop),
+		NewRouteFinalizer(drop),
 		// route,
 	}
 	return term
 }
 
 //NewRoutes returns a new route for a specific path
-func NewRoutes(path string) *Routes {
+func NewRoutes(path string, drop bool) *Routes {
 	matcher := reggy.GenerateClassicMatcher(path)
-	return NewRoutesBy(matcher.Original, matcher)
+	return NewRoutesBy(matcher.Original, matcher, drop)
 }
 
 //NewRoutesBy returns a new route for a specific path but allows giving your own matcher
-func NewRoutesBy(path string, pattern *reggy.ClassicMatcher) *Routes {
+func NewRoutesBy(path string, pattern *reggy.ClassicMatcher, drop bool) *Routes {
 	r := &Routes{
 		grids.NewGrid("Composelab/Routes/" + path),
 		path,
 		pattern,
 		goutils.NewMap(),
-		NewTerm(),
+		NewTerm(drop),
 	}
 	// r.Term = NewTerm(r)
 
@@ -219,11 +381,11 @@ func NewRoutesBy(path string, pattern *reggy.ClassicMatcher) *Routes {
 	r.NewOut("All")
 
 	r.OrOut("All", func(p *grids.GridPacket) {
-		r.Term.AllEvents.Emit(p)
+		r.Term.Loose.Drop(p)
 	})
 
 	r.OrOut("Only", func(p *grids.GridPacket) {
-		r.Term.OnlyEvents.Emit(p)
+		r.Term.Strict.Drop(p)
 	})
 
 	r.AndIn("Request", func(p *grids.GridPacket, next func(f *grids.GridPacket)) {
