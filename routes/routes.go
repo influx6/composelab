@@ -6,7 +6,6 @@ package routes
 import (
 	"errors"
 	"fmt"
-	"log"
 	"strings"
 	"time"
 
@@ -71,18 +70,10 @@ func (rk *RouteKeeper) Release(cbx func(*grids.GridPacket)) error {
 func (rk *RouteKeeper) Secure(g *grids.GridPacket) {
 	go func() {
 		go func() {
-			log.Println("sending into channel timeout", rk.timeout)
-			if rk.done {
-				return
-			}
 			rk.block <- g
 		}()
 
-		log.Println("starting channel timeout", rk.timeout)
 		<-time.After(rk.timeout)
-		// select {
-		// case <-tm:
-		log.Println("closing channel after timeout", rk.timeout)
 
 		if !rk.buffered {
 			defer close(rk.block)
@@ -125,7 +116,7 @@ func NewRouteKeeper(timeout int, fail func(*grids.GridPacket)) *RouteKeeper {
 }
 
 //NewRouteFinalizer returns a new RouteFinalizer
-func NewRouteFinalizer(f bool) *RouteFinalizer {
+func NewRouteFinalizer(f bool, fail func(g *grids.GridPacket)) *RouteFinalizer {
 	rf := &RouteFinalizer{
 		f,
 		immute.CreateList(make([]interface{}, 0)),
@@ -133,8 +124,15 @@ func NewRouteFinalizer(f bool) *RouteFinalizer {
 	}
 
 	rf.Added.Listen(grids.ByPackets(func(data *grids.GridPacket) {
+		ms, ok := data.Get("timeout").(int)
 
-		rf.Box.Add(data, nil)
+		if !ok {
+			ms = 6
+		}
+
+		kp := NewRouteKeeper(ms, fail)
+		rf.Box.Add(kp, nil)
+		kp.Secure(data)
 	}))
 
 	return rf
